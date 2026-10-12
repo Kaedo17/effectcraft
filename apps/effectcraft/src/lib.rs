@@ -12,12 +12,14 @@
 //! `--control <port>` (or `EFFECTCRAFT_CONTROL_PORT`) starts a localhost JSON-lines control server;
 //! see `effectcraft_ui_egui::control` for the methods.
 //!
-//! On Android there are no command-line arguments, so the app opens an empty Untitled Project,
-//! and there are no file or message dialogs (rfd has no Android backend): the file hooks stay
-//! empty and the commands fail with "no file dialog available".
+//! On Android there are no command-line arguments, so the app opens an empty Untitled Project.
+//! There is no system file picker (rfd has no Android backend): Save, Open Project and the
+//! export dialogs are served in-app from app-private storage (`Projects/`, `Exports/`), while
+//! media import and folder picks stay unavailable.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 // Built everywhere so its tests run on every platform; only Linux AppImages use it.
+mod android_storage;
 mod appearance;
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 mod appimage;
@@ -205,6 +207,15 @@ fn run_inner(#[cfg(target_os = "android")] android_app: Option<android_activity:
     };
     // eframe cannot create its event loop on Android without the activity's handle; without
     // it `run_native` fails before the window exists and the activity ends on launch.
+    // The handle also resolves the app-private storage below (saves, exports, settings).
+    #[cfg(target_os = "android")]
+    let android_files: Option<std::path::PathBuf> = android_app.as_ref().and_then(|app| {
+        let dir = app.internal_data_path();
+        if dir.is_none() {
+            log::warn!("android storage: no internal data path; save and open stay unavailable");
+        }
+        dir
+    });
     #[cfg(target_os = "android")]
     {
         options.android_app = android_app;
@@ -258,10 +269,29 @@ fn run_inner(#[cfg(target_os = "android")] android_app: Option<android_activity:
                 }
                 session.config = Some(std::sync::Arc::new(effectcraft_engine::config::DirConfig::new(dir)));
             }
+            // Android has no platform config directory: settings, auto-save and crash recovery
+            // live in app-private storage instead (quietly off when it is unavailable).
+            #[cfg(target_os = "android")]
+            let android_layout = android_files.as_deref().map(android_storage::layout);
+            #[cfg(target_os = "android")]
+            if let Some(l) = &android_layout {
+                if let Err(e) = android_storage::ensure(l) {
+                    log::warn!("android storage: {e}");
+                }
+                session.config = Some(std::sync::Arc::new(effectcraft_engine::config::DirConfig::new(l.config.clone())));
+            }
             session.load_settings();
             // Fit the window to its monitor, or put it back where it was (still hidden).
             let saved_window = session.config.as_deref().and_then(window::load);
             let opened = cc.winit_window().map(|w| window::restore(w, saved_window));
+            // Render output defaults to app-private Exports on Android: the working directory is
+            // `/` there and nothing else in the fallback chain resolves to somewhere writable.
+            #[cfg(target_os = "android")]
+            if let Some(l) = &android_layout
+                && session.prefs.export.default_output_folder.trim().is_empty()
+            {
+                session.prefs.export.default_output_folder = l.exports.to_string_lossy().to_string();
+            }
             let recovery = if control_port.is_none() { session.begin_recovery() } else { None };
             let project = files.iter().find(|f| is_project_file(f)).cloned();
             if let Some(p) = project {
@@ -351,6 +381,12 @@ fn run_inner(#[cfg(target_os = "android")] android_app: Option<android_activity:
             app.hooks.system_theme = appearance::service();
             app.hooks.audio_device = Some(Box::new(audio_out::open));
             app.hooks.audio_devices = Some(Box::new(audio_out::devices));
+            // The in-app Save / Open Project prompts read and write here (nothing when the
+            // storage directory was unavailable: the commands keep their "no dialog" error).
+            #[cfg(target_os = "android")]
+            if let Some(base) = android_files {
+                app.hooks.app_files_dir = Some(base);
+            }
             #[cfg(target_os = "macos")]
             {
                 // The commands' file dialogs open as sheets instead of nested modal loops (#511).
