@@ -62,6 +62,9 @@ pub struct DialogState {
     pub delete_items: super::delete_items::Pending,
     /// The Gradient Editor's draft and the property it edits.
     pub gradient: super::gradient_editor::Draft,
+    /// Android's in-app file prompt (request, answer shell, filename field).
+    #[cfg(target_os = "android")]
+    pub android_file: super::android_file::AndroidFileDraft,
 }
 
 pub fn open_new_comp(app: &mut EffectcraftApp) {
@@ -221,6 +224,8 @@ pub fn show(app: &mut EffectcraftApp, ctx: &egui::Context) {
         Dialog::UnsavedChanges => super::unsaved::show(app, ctx, &t),
         Dialog::DeleteItems => super::delete_items::show(app, ctx, &t),
         Dialog::GradientEditor => super::gradient_editor::show(app, ctx, &t),
+        #[cfg(target_os = "android")]
+        Dialog::AndroidFile => super::android_file::show(app, ctx, &t),
     }
 }
 

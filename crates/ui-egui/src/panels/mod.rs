@@ -1,5 +1,7 @@
 //! Panel bodies.
 
+/// Android's in-app Save / Open Project prompts (app-private storage; no system picker).
+pub mod android_file;
 pub mod anim_tools;
 pub mod camera_tracker_ui;
 pub mod comp_settings;

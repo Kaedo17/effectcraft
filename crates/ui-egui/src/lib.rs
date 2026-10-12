@@ -97,6 +97,10 @@ pub enum Dialog {
     DeleteItems,
     /// A gradient property's Gradient Editor (`panels::gradient_editor`, `prop.editGradient`).
     GradientEditor,
+    /// Android's in-app Save / Open Project prompt (`panels::android_file`): no system
+    /// picker exists there, so the app-private storage directory answers instead.
+    #[cfg(target_os = "android")]
+    AndroidFile,
 }
 
 /// The desktop's light or dark appearance where egui cannot see it (Wayland compositors that send
@@ -129,6 +133,7 @@ impl FileDialog {
 pub type DialogDone = Box<dyn FnOnce(Vec<String>) + Send>;
 
 /// A non-blocking file dialog's answer for the command that asked (`menus::dialog_answered`).
+#[derive(Clone, Debug)]
 pub(crate) struct DialogAnswer {
     pub command: String,
     pub key: &'static str,
@@ -164,6 +169,11 @@ pub struct Hooks {
     /// the commands' dialogs (File ▸ Import, Open, Save As…) where a modal dialog's nested event
     /// loop inside a frame is unsafe: on macOS a drag over the window then aborted the app (#511).
     pub file_dialog_async: Option<Box<dyn Fn(FileDialog, DialogDone)>>,
+    /// The app-private storage directory on Android (`AndroidApp::internal_data_path`), where the
+    /// in-app Save / Open Project prompts read and write. `None` elsewhere (or when it could not
+    /// be resolved): the commands fail with "no file dialog available", as before.
+    #[cfg(target_os = "android")]
+    pub app_files_dir: Option<std::path::PathBuf>,
     /// Tells the user the graphics device was lost and the window is closing, once. `saved` is
     /// the auto-save of unsaved changes (`None`: nothing was unsaved), its path or why it failed.
     pub device_lost: Option<Box<dyn Fn(Option<Result<String, String>>)>>,
