@@ -268,6 +268,11 @@ pub fn show(app: &mut EffectcraftApp, ctx: &egui::Context) {
         #[cfg(target_os = "android")]
         Dialog::AndroidFile => super::android_file::show(app, ctx, &t),
     }
+    // A folder pick from Settings renders over the dialog that asked, keeping it open.
+    #[cfg(target_os = "android")]
+    if d != Dialog::AndroidFile && app.dialog_state.android_file.request.is_some() {
+        super::android_file::show(app, ctx, &t);
+    }
 }
 
 /// About tabs: About · Contributors · Models.
