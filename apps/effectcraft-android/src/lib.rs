@@ -9,10 +9,10 @@
 //! crate therefore carries its own lints (see `Cargo.toml`) and holds no unsafe logic: one
 //! export attribute on a safe trampoline.
 //!
-//! Android limitations (v1): no file or message dialogs (rfd has no Android backend), so the
-//! file hooks stay empty and the commands fail with "no file dialog available"; settings,
-//! plug-ins and crash recovery need a config directory, which Android has none of yet, so
-//! they are skipped.
+//! Android limitations (v1): no system file picker or message dialogs (rfd has no Android
+//! backend), so Save, Open Project and the export dialogs are served in-app from app-private
+//! storage while media import stays unavailable; settings, plug-ins and crash recovery use
+//! app-private storage too.
 
 /// NativeActivity's main-loop thread entry point (required; see the `android-activity` docs).
 /// winit pumps the activity's lifecycle and input events inside [`effectcraft::run_android`],

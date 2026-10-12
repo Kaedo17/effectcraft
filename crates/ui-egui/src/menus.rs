@@ -1397,6 +1397,21 @@ fn file_dialog(app: &mut EffectcraftApp, id: &str, params: &Value) -> Option<Res
         );
         return Some(Ok(json!({"dialog": id})));
     }
+    // Android serves Save and Open Project with its in-app prompt (app-private storage) once
+    // the host resolved the directory; media import and folder picks stay unavailable there.
+    #[cfg(target_os = "android")]
+    if app.hooks.app_files_dir.is_some()
+        && let Some(request) = match &ask {
+            Ask::Save(default) => Some(crate::FileDialog::save(default)),
+            Ask::OpenProject => Some(crate::FileDialog::OpenProject),
+            _ => None,
+        }
+    {
+        let answer = crate::DialogAnswer { command: id.to_string(), key, params: params.clone(), paths: Vec::new() };
+        if let Some(response) = crate::panels::android_file::spawn(app, id, request, answer) {
+            return Some(response);
+        }
+    }
     let picked: Option<Value> = match ask {
         Ask::Folder => {
             let Some(f) = app.hooks.pick_folder.as_ref() else { return Some(Err("no folder dialog available (pass `folder`)".into())) };
