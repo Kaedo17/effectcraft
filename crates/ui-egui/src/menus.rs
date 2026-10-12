@@ -1294,6 +1294,7 @@ fn file_dialog(app: &mut EffectcraftApp, id: &str, params: &Value) -> Option<Res
         && let Some(request) = match &ask {
             Ask::Save(default) => Some(crate::FileDialog::save(default)),
             Ask::OpenProject => Some(crate::FileDialog::OpenProject),
+            Ask::Folder => Some(crate::FileDialog::Folder),
             _ => None,
         }
     {

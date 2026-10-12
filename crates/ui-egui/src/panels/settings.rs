@@ -728,6 +728,16 @@ pub fn show(app: &mut EffectcraftApp, ctx: &egui::Context, t: &Tokens) {
                 }
             }
             Act::PickFolder(k) => {
+                // Android has no blocking folder dialog: the in-app browser answers while the
+                // Settings dialog stays open.
+                #[cfg(target_os = "android")]
+                if app.hooks.app_files_dir.is_some() && app.hooks.pick_folder.is_none() {
+                    crate::panels::android_file::pick_folder_pref(app, &k);
+                } else if let Some(f) = app.hooks.pick_folder.as_ref().and_then(|f| f()) {
+                    let _ = app.session.prefs.set(&k, json!(f));
+                    app.session.prefs_changed();
+                }
+                #[cfg(not(target_os = "android"))]
                 if let Some(f) = app.hooks.pick_folder.as_ref().and_then(|f| f()) {
                     let _ = app.session.prefs.set(&k, json!(f));
                     app.session.prefs_changed();
