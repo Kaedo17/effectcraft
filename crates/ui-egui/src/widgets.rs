@@ -622,12 +622,19 @@ fn menu_scroll_area(max_h: f32) -> egui::ScrollArea {
 
 /// How a menu's contents respond to a drag: always, with the scroll bar and the wheel too.
 ///
-/// egui's own default (`DragScroll::OnTouch`) switches drag-to-scroll on only once
-/// `InputState::has_touch_screen` has seen an `Event::Touch`, and on the Android build it never
-/// had one — a finger drag on the Edit menu was swallowed whole, so the rows below the fold (Select
-/// All through Preferences, the last of 34) could not be reached at all (#269). A menu must never
-/// depend on that detection: if it is taller than the window it has to scroll, whatever pointer
-/// the user is holding.
+/// egui's own default (`DragScroll::OnTouch`) gates drag-to-scroll behind
+/// `InputState::has_touch_screen`, and measured on a phone in landscape (2311DRK48G, 1220x2712)
+/// that gate is closed for menus: an 850 pt finger drag inside the Edit menu left it byte-for-byte
+/// unchanged, so the rows below the fold (Select All through Preferences, the last of 34) could not
+/// be reached at all (#269). Forcing the drag on opened it — the same drag now walks the menu from
+/// "Can't Undo" down to "Preferences" and back again.
+///
+/// The same drag did scroll the file browser's plain `ScrollArea`, which keeps egui's default, so
+/// touch input does reach the app and the two areas differ in more than this one setting:
+/// `ScrollSource::ALL` enables several sources of which the drag is only one, and the list may have
+/// scrolled by a fling rather than by dragging. That is left open on purpose. What is measured is
+/// the before/after on the menu itself, and a menu must never depend on that detection: if it is
+/// taller than the window it has to scroll, whatever pointer the user is holding.
 fn menu_drag() -> egui::containers::scroll_area::DragScroll {
     egui::containers::scroll_area::DragScroll::Always
 }
@@ -751,11 +758,10 @@ mod tests {
     /// Templates, Keyboard Shortcuts and Preferences below the fold.
     #[test]
     fn a_menu_taller_than_the_window_scrolls_by_drag() {
-        // egui's default scroll source is `DragScroll::OnTouch`, which switches drag-to-scroll on
-        // only once `InputState::has_touch_screen` has seen an `Event::Touch`. It never had on the
-        // Android build, so a finger drag was swallowed whole and the rows below the fold could not
-        // be reached at all. The menu body must never depend on that detection.
-        assert_eq!(menu_drag(), egui::containers::scroll_area::DragScroll::Always, "menus must drag-scroll before egui has seen a touch event");
+        // Measured on the phone (2311DRK48G, landscape): with egui's default `DragScroll::OnTouch`
+        // an 850 pt finger drag left the Edit menu byte-for-byte unchanged, while the same drag
+        // scrolled the file browser's plain ScrollArea. Forcing the drag on is what opened the menu.
+        assert_eq!(menu_drag(), egui::containers::scroll_area::DragScroll::Always, "menus must drag-scroll regardless of egui's touch-screen detection");
 
         // And the layout really does overflow: in a 300 pt window (a phone in landscape is barely
         // taller) the last of 42 rows starts below the bottom edge, so without scrolling the menu
