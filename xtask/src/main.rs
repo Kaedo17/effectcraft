@@ -179,6 +179,33 @@ fn is_asset(path: &str) -> bool {
     std::path::Path::new(path).extension().and_then(|e| e.to_str()).is_some_and(|e| ASSET_EXT.contains(&e.to_ascii_lowercase().as_str()))
 }
 
+/// The one directory whose attribution sidecars are dot-prefixed. It is the Android resource tree
+/// `cargo apk` hands to `aapt -S`: `aapt` rejects a second resource name in a directory, so it
+/// refuses `mipmap-mdpi/ic_launcher.png.attribution`, but it does skip dot files. Nothing else in
+/// the repository may use that spelling — see `packaging/icons.sh`.
+const ANDROID_RES: &str = "apps/effectcraft-android/res/";
+
+/// The sidecar file for the asset `asset`, following [`ANDROID_RES`]'s dot-prefixed exception.
+fn sidecar_for(asset: &str) -> String {
+    let leaf = std::path::Path::new(asset).file_name().and_then(|n| n.to_str()).unwrap_or("");
+    match asset.strip_prefix(ANDROID_RES).and_then(|_| asset.rsplit_once('/')) {
+        Some((dir, _)) => format!("{dir}/.{leaf}.attribution"),
+        None => format!("{asset}.attribution"),
+    }
+}
+
+/// The asset a sidecar belongs to, mirroring [`sidecar_for`]; `None` when `path` is not a sidecar.
+fn asset_for(path: &str) -> Option<String> {
+    let stem = path.strip_suffix(".attribution")?;
+    if let Some((dir, leaf)) = stem.rsplit_once('/')
+        && stem.starts_with(ANDROID_RES)
+        && leaf.starts_with('.')
+    {
+        return Some(format!("{dir}/{}", &leaf[1..]));
+    }
+    Some(stem.to_string())
+}
+
 fn assets() -> Result<(), String> {
     let files = repo_files()?;
     let index = std::fs::read_to_string("ATTRIBUTION.md").map_err(|e| format!("ATTRIBUTION.md: {e}"))?;
@@ -190,7 +217,7 @@ fn assets() -> Result<(), String> {
         if lower.contains("adobe") || lower.contains("aftereffects") || lower.contains("after-effects") {
             errors.push(format!("{f}: asset paths must not reference Adobe/After Effects (AGENTS.md §1)"));
         }
-        let side = format!("{f}.attribution");
+        let side = sidecar_for(f);
         match std::fs::read_to_string(&side) {
             Err(_) => errors.push(format!("{f}: missing attribution sidecar {side}")),
             Ok(text) => {
@@ -211,9 +238,12 @@ fn assets() -> Result<(), String> {
         }
     }
     for f in files.iter().filter(|f| f.ends_with(".attribution")) {
-        let asset = f.trim_end_matches(".attribution");
-        if !std::path::Path::new(asset).exists() {
-            errors.push(format!("{f}: sidecar for a file that does not exist"));
+        match asset_for(f) {
+            Some(asset) if !std::path::Path::new(&asset).exists() => {
+                errors.push(format!("{f}: sidecar for a file that does not exist"));
+            }
+            Some(_) => {}
+            None => errors.push(format!("{f}: not an attribution sidecar")),
         }
     }
     if errors.is_empty() {
@@ -487,7 +517,7 @@ pub fn root() -> std::path::PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::audio_backend_hint;
+    use super::{ANDROID_RES, asset_for, audio_backend_hint, sidecar_for};
 
     #[test]
     fn alsa_present_is_not_an_error() {
@@ -499,6 +529,33 @@ mod tests {
         let e = audio_backend_hint(false).expect_err("missing ALSA must fail CI");
         for want in ["alsa-lib-devel", "libasound2-dev", "alsa-lib", "pkg-config", "PKG_CONFIG_PATH"] {
             assert!(e.contains(want), "hint lost `{want}`:\n{e}");
+        }
+    }
+
+    #[test]
+    fn sidecars_are_next_to_their_asset_everywhere_but_the_android_res_tree() {
+        assert_eq!(sidecar_for("assets/app-icon/effectcraft.ico"), "assets/app-icon/effectcraft.ico.attribution");
+        let res = format!("{ANDROID_RES}mipmap-mdpi/ic_launcher.png");
+        assert_eq!(sidecar_for(&res), format!("{ANDROID_RES}mipmap-mdpi/.ic_launcher.png.attribution"));
+    }
+
+    #[test]
+    fn sidecar_and_asset_round_trip() {
+        for asset in ["assets/fonts/Inter-Regular.ttf", &format!("{ANDROID_RES}mipmap-mdpi/ic_launcher.png")] {
+            let side = sidecar_for(asset);
+            assert_eq!(asset_for(&side).as_deref(), Some(asset), "{side}");
+        }
+        assert_eq!(asset_for("README.md"), None);
+    }
+
+    #[test]
+    fn only_the_android_res_tree_uses_the_dot_prefixed_spelling() {
+        // aapt refuses a second resource name per directory, so a plain sidecar inside the APK's
+        // resource tree would break `cargo apk build`. The exception has to stay exactly there.
+        assert!(ANDROID_RES.ends_with("/res/"));
+        assert_eq!(sidecar_for(&format!("{ANDROID_RES}mipmap-mdpi/ic_launcher.png")), format!("{ANDROID_RES}mipmap-mdpi/.ic_launcher.png.attribution"));
+        for elsewhere in ["assets/app-icon/effectcraft.ico", "docs/brand/artcraft-logo.svg", "assets/fonts/Inter-Regular.ttf"] {
+            assert!(!sidecar_for(elsewhere).contains("/."), "dot-prefixed sidecar leaked to {elsewhere}");
         }
     }
 }
