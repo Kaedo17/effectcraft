@@ -45,6 +45,18 @@ fn h264_encoder() -> Option<&'static str> {
 /// Run ffmpeg to produce `name` (once; written to a temp name and renamed so concurrent test
 /// processes never see a partial file). `None` when ffmpeg is unavailable.
 fn ffmpeg_fixture(name: &str, args: &[&str]) -> Option<PathBuf> {
+    ffmpeg_fixture_inner(name, args, true)
+}
+
+/// Like [`ffmpeg_fixture`] for a fixture only one test wants, which this build of ffmpeg may not
+/// be able to make at all: H.264 High 4:2:2 10-bit needs `libx264`, and distro "free" builds often
+/// ship without it. Such a test skips with a note rather than failing on the packager's choice of
+/// ffmpeg, the same way every test here skips when ffmpeg is missing altogether.
+fn try_ffmpeg_fixture(name: &str, args: &[&str]) -> Option<PathBuf> {
+    ffmpeg_fixture_inner(name, args, false)
+}
+
+fn ffmpeg_fixture_inner(name: &str, args: &[&str], must_succeed: bool) -> Option<PathBuf> {
     if !have_ffmpeg() {
         eprintln!("ffmpeg not found: skipping");
         return None;
@@ -57,7 +69,14 @@ fn ffmpeg_fixture(name: &str, args: &[&str]) -> Option<PathBuf> {
     let ext = out.extension().map(|e| e.to_string_lossy().to_string()).unwrap_or_default();
     let tmp = out.with_file_name(format!("tmp-{}-{:?}.{ext}", std::process::id(), std::thread::current().id()).replace(['(', ')'], ""));
     let st = Command::new("ffmpeg").args(["-hide_banner", "-loglevel", "error", "-y"]).args(args).arg(&tmp).status().expect("run ffmpeg");
-    assert!(st.success(), "ffmpeg failed for {name}");
+    if !st.success() {
+        let _ = std::fs::remove_file(&tmp);
+        if must_succeed {
+            panic!("ffmpeg failed for {name}");
+        }
+        eprintln!("this ffmpeg build cannot make {name}: skipping");
+        return None;
+    }
     std::fs::rename(&tmp, &out).expect("rename");
     Some(out)
 }
@@ -1074,7 +1093,7 @@ fn a_called_off_read_does_not_decode() {
 /// footage reports it (not a black frame without a word).
 #[test]
 fn an_unsupported_stream_reports_why_it_shows_no_picture() {
-    let Some(p) = ffmpeg_fixture(
+    let Some(p) = try_ffmpeg_fixture(
         "h264_high422_10bit.mp4",
         &["-f", "lavfi", "-i", "testsrc=size=320x180:rate=24:duration=1", "-c:v", "libx264", "-profile:v", "high422", "-pix_fmt", "yuv422p10le"],
     ) else {
