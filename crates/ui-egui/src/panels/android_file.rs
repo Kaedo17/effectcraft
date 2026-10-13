@@ -180,14 +180,18 @@ pub(crate) fn spawn(
     if app.dialog.is_some() {
         return Some(Err("a dialog is already open".to_string()));
     }
-    if let crate::FileDialog::Save { ref default, .. } = request {
-        app.dialog_state.android_file.name = Path::new(default).file_name().and_then(|n| n.to_str()).unwrap_or(default).to_string();
-    }
-    if let crate::FileDialog::Open { ref exts, many } = request {
-        app.dialog_state.android_file.exts = exts.clone();
-        app.dialog_state.android_file.many = many;
-    }
-    app.dialog_state.android_file = AndroidFileDraft { request: Some(request), answer: Some(answer), browser: None, ..Default::default() };
+    // One draft built once. Stashing these onto the previous value and then replacing the
+    // whole struct threw them away: the Save field started blank, an Open listed every file
+    // instead of its extensions, and multi-select never reached the browser.
+    let name = match request {
+        crate::FileDialog::Save { ref default, .. } => Path::new(default).file_name().and_then(|n| n.to_str()).unwrap_or(default).to_string(),
+        _ => String::new(),
+    };
+    let (exts, many) = match request {
+        crate::FileDialog::Open { ref exts, many } => (exts.clone(), many),
+        _ => (Vec::new(), false),
+    };
+    app.dialog_state.android_file = AndroidFileDraft { request: Some(request), answer: Some(answer), browser: None, name, exts, many, ..Default::default() };
     app.dialog = Some(crate::Dialog::AndroidFile);
     Some(Ok(json!({"dialog": id})))
 }
@@ -202,6 +206,27 @@ pub(crate) fn pick_folder_pref(app: &mut crate::EffectcraftApp, key: &str) {
     }
     app.dialog_state.android_file = AndroidFileDraft { request: Some(crate::FileDialog::Folder), browser: Some(base), ..Default::default() };
     app.dialog_state.android_file.pref_key = Some(key.to_string());
+}
+
+/// Settings ▸ … file buttons: pick a file for the preference `key` while the Settings dialog
+/// stays open (the browser renders over it) — Template Project, which needs a project file.
+/// Answers true when the browser was opened, so the caller can stay silent only then.
+#[cfg(target_os = "android")]
+pub(crate) fn pick_project_pref(app: &mut crate::EffectcraftApp, key: &str) -> bool {
+    let Some(base) = app.hooks.app_files_dir.clone() else { return false };
+    if app.dialog_state.android_file.request.is_some() {
+        return false;
+    }
+    let exts: Vec<String> = PROJECT_EXTS.iter().map(|e| e.to_string()).collect();
+    app.dialog_state.android_file = AndroidFileDraft {
+        request: Some(crate::FileDialog::Open { exts: exts.clone(), many: false }),
+        browser: Some(base),
+        exts,
+        many: false,
+        pref_key: Some(key.to_string()),
+        ..Default::default()
+    };
+    true
 }
 
 /// The pending request answered with `paths` (empty: cancelled). A preference pick writes the
@@ -349,17 +374,17 @@ fn browser(app: &mut crate::EffectcraftApp, ctx: &egui::Context, t: &crate::them
     let mut to_app = false;
     let mut ask_grant = false;
     super::dialogs::modal(ctx, if is_file { "Choose Files" } else { "Choose Folder" }, egui::vec2(440.0, 380.0), t, |ui| {
-        // Root switcher: App storage ↔ Shared storage (the latter only once granted).
+        // Root switcher: two real buttons, the browsed root highlighted. These were
+        // `selectable_label`s, which draw as flat text, so "Shared storage (grant access)"
+        // read as a caption and the grant behind it was never findable.
         ui.horizontal(|ui| {
             let in_shared = matches!(root, StorageRoot::Shared(_));
-            let app_btn = ui.selectable_label(!in_shared, tr("App storage"));
-            if app_btn.clicked() {
+            if ui.add(egui::Button::new(tr("App storage")).selected(!in_shared)).clicked() {
                 to_app = true;
             }
             if let Some(_sroot) = &shared {
                 let label = if granted { tr("Shared storage") } else { tr("Shared storage (grant access)") };
-                let sh_btn = ui.selectable_label(in_shared, label);
-                if sh_btn.clicked() {
+                if ui.add(egui::Button::new(label).selected(in_shared)).clicked() {
                     if granted {
                         to_shared = true;
                     } else {
@@ -368,6 +393,16 @@ fn browser(app: &mut crate::EffectcraftApp, ctx: &egui::Context, t: &crate::them
                 }
             }
         });
+        // Android never grants "All files access" silently, so ask for it where it can be
+        // acted on: the button above is the only other mention and reads as a caption.
+        if shared.is_some() && !granted {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(tr("EffectCraft needs \"All files access\" to read and write outside its own folder."));
+                if ui.button(tr("Allow…")).clicked() {
+                    ask_grant = true;
+                }
+            });
+        }
         ui.label(format!("Location: {}", dir.to_string_lossy()));
         if dir != root.dir() && ui.button(tr("Up")).clicked() {
             up = true;
@@ -418,6 +453,13 @@ fn browser(app: &mut crate::EffectcraftApp, ctx: &egui::Context, t: &crate::them
             });
         }
         ui.add_space(6.0);
+        // The status toast is painted on the base layer, beneath this modal's backdrop, so a
+        // failure here ("Could not create the folder: …", "Name the new folder first") looked
+        // exactly like nothing happening. Repeat it where it can be seen.
+        if !app.ui.status.is_empty() {
+            ui.label(app.ui.status.clone());
+            ui.add_space(4.0);
+        }
         ui.horizontal(|ui| {
             choose = ui.button(if is_file { tr("Open") } else { tr("Choose this folder") }).clicked();
             cancel = ui.button(tr("Cancel")).clicked();

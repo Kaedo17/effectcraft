@@ -738,9 +738,21 @@ pub fn show(app: &mut EffectcraftApp, ctx: &egui::Context, t: &Tokens) {
                 }
             }
             Act::PickProject(k) => {
-                if let Some(f) = app.hooks.pick_open_project.as_ref().and_then(|f| f()) {
+                // Android has no blocking file dialog: the in-app browser answers while the
+                // Settings dialog stays open, as `Act::PickFolder` does. Without this branch
+                // the button did nothing at all on Android.
+                #[cfg(target_os = "android")]
+                let opened =
+                    app.hooks.app_files_dir.is_some() && app.hooks.pick_open_project.is_none() && crate::panels::android_file::pick_project_pref(app, &k);
+                #[cfg(not(target_os = "android"))]
+                let opened = false;
+                let picked: Option<String> = if opened { None } else { app.hooks.pick_open_project.as_ref().and_then(|f| f()) };
+                if let Some(f) = picked {
                     let _ = app.session.prefs.set(&k, json!(f));
                     app.session.prefs_changed();
+                } else if !opened {
+                    // A button that does nothing reads as broken; say why instead.
+                    app.ui.status = tr("No file dialog is available here; type the path instead.").to_string();
                 }
             }
             Act::PickModel(task) => {
