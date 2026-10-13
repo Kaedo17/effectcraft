@@ -56,8 +56,8 @@ this section is what is different about running it on a device.
 - **Landscape, arm64, Android 9 (API 28) and up**, packaged as `ai.storyteller.effectcraft` with
   EffectCraft's own launcher icon at five densities.
 - **Touch:** a menu taller than the screen scrolls when you drag it. On a phone in landscape the
-  Edit menu has about 42 rows and room for 26, so this is the difference between reaching
-  Preferences and not.
+  Edit menu has 34 rows and room for 21, so this is the difference between reaching Preferences
+  and not.
 
 ### Building the APK
 
