@@ -1397,17 +1397,18 @@ fn file_dialog(app: &mut EffectcraftApp, id: &str, params: &Value) -> Option<Res
         );
         return Some(Ok(json!({"dialog": id})));
     }
-    // Android serves Save and Open Project with its in-app prompt (app-private storage) once
-    // the host resolved the directory; media import and folder picks stay unavailable there.
+    // Android serves Save, Open Project, folder picks and media import with its in-app browser
+    // (app-private storage, plus shared storage once "All files access" is granted) once the
+    // host resolved the directory.
     #[cfg(target_os = "android")]
-    if app.hooks.app_files_dir.is_some()
-        && let Some(request) = match &ask {
-            Ask::Save(default) => Some(crate::FileDialog::save(default)),
-            Ask::OpenProject => Some(crate::FileDialog::OpenProject),
-            Ask::Folder => Some(crate::FileDialog::Folder),
-            _ => None,
-        }
-    {
+    if app.hooks.app_files_dir.is_some() {
+        let request = match &ask {
+            Ask::Save(default) => crate::FileDialog::save(default),
+            Ask::OpenProject => crate::FileDialog::OpenProject,
+            Ask::Folder => crate::FileDialog::Folder,
+            Ask::Import => crate::FileDialog::Open { exts: MEDIA.iter().map(|e| e.to_string()).collect(), many: key == "paths" },
+            Ask::Open(exts) => crate::FileDialog::Open { exts: exts.iter().map(|e| e.to_string()).collect(), many: false },
+        };
         let answer = crate::DialogAnswer { command: id.to_string(), key, params: params.clone(), paths: Vec::new() };
         if let Some(response) = crate::panels::android_file::spawn(app, id, request, answer) {
             return Some(response);

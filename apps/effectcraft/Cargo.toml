@@ -33,7 +33,6 @@ log = { workspace = true }
 # The NativeActivity handle eframe's event loop needs (`NativeOptions.android_app`); the
 # same 0.6 instance winit and eframe use, so the handle passes across crates as one type.
 android-activity = { version = "0.6", default-features = false, features = ["native-activity"] }
-
 [target.'cfg(not(target_os = "android"))'.dependencies]
 # File and message dialogs. rfd has no Android backend (it doesn't compile there), so
 # Android builds leave the file hooks empty and the commands fail with

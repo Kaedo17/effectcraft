@@ -13,14 +13,21 @@
 //! see `effectcraft_ui_egui::control` for the methods.
 //!
 //! On Android there are no command-line arguments, so the app opens an empty Untitled Project.
-//! There is no system file picker (rfd has no Android backend): Save, Open Project and the
-//! export dialogs are served in-app from app-private storage (`Projects/`, `Exports/`), while
-//! media import and folder picks stay unavailable.
+//! There is no system file picker (rfd has no Android backend): Save, Open Project, exports,
+//! folder picks and media import are served by the in-app browser instead. It browses the
+//! app-private storage (`Projects/`, `Exports/`) always, and shared storage
+//! (`/storage/emulated/0`) too once the user grants "All files access" — the grant is checked
+//! and requested over JNI by the entry crate (`effectcraft-android`), which opts out of this
+//! workspace's `unsafe_code = "forbid"`; this crate stays unsafe-free and only receives
+//! [`SharedStorageAccess`] as plain closures.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
-// Built everywhere so its tests run on every platform; only Linux AppImages use it.
+// Built everywhere so its tests run on every platform; only Android uses it (its callers are
+// cfg(android), so elsewhere these tests are the reason it compiles at all).
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
 mod android_storage;
 mod appearance;
+// Built everywhere so its tests run on every platform; only Linux AppImages use it.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 mod appimage;
 #[cfg(target_os = "macos")]
@@ -137,7 +144,7 @@ fn control_port(name: &str, value: Option<&str>) -> Result<u16, String> {
 pub fn run() -> eframe::Result {
     #[cfg(target_os = "android")]
     {
-        run_inner(None)
+        run_inner(None, None)
     }
     #[cfg(not(target_os = "android"))]
     {
@@ -145,15 +152,33 @@ pub fn run() -> eframe::Result {
     }
 }
 
-/// Android entry point: like [`run`], but with the activity's handle, which eframe's event
-/// loop cannot be created without — leaving it out ends the activity as soon as it starts.
+/// Android's "All files access" capabilities (`MANAGE_EXTERNAL_STORAGE`), built by the entry
+/// crate — which owns the JNI to the activity's JVM, since this workspace forbids `unsafe` —
+/// and handed to the in-app file browser as hooks: whether shared storage may be browsed, and
+/// how to ask for the grant. `None` when the entry crate could not reach the JVM (the browser
+/// then only ever offers the app-private root).
 #[cfg(target_os = "android")]
-pub fn run_android(android_app: android_activity::AndroidApp) -> eframe::Result {
-    run_inner(Some(android_app))
+pub struct SharedStorageAccess {
+    /// Whether the grant holds right now (re-checked whenever the browser shows the root).
+    pub granted: Box<dyn Fn() -> bool>,
+    /// Ask for it: the system settings page on Android 11+, the permission dialog before that.
+    pub ask: Box<dyn Fn()>,
+}
+
+/// Android entry point: like [`run`], but with the activity's handle, which eframe's event
+/// loop cannot be created without — leaving it out ends the activity as soon as it starts —
+/// and with the optional shared-storage capabilities [`SharedStorageAccess`] the entry crate
+/// resolves through JNI.
+#[cfg(target_os = "android")]
+pub fn run_android(android_app: android_activity::AndroidApp, access: Option<SharedStorageAccess>) -> eframe::Result {
+    run_inner(Some(android_app), access)
 }
 
 /// Shared startup; `android_app` is the NativeActivity handle eframe needs on Android.
-fn run_inner(#[cfg(target_os = "android")] android_app: Option<android_activity::AndroidApp>) -> eframe::Result {
+fn run_inner(
+    #[cfg(target_os = "android")] android_app: Option<android_activity::AndroidApp>,
+    #[cfg(target_os = "android")] access: Option<SharedStorageAccess>,
+) -> eframe::Result {
     // First, so the panic hook and every start-up warning are recorded. Records go to stderr
     // and the session log; Help ▸ Enable Logging writes through this logger too, and warnings
     // feed the compatibility report.
@@ -190,7 +215,24 @@ fn run_inner(#[cfg(target_os = "android")] android_app: Option<android_activity:
     let mut launch = launch_guard::Launch::begin(effectcraft_host::config_dir().as_deref(), std::env::var_os("WGPU_BACKEND").is_some());
     let on_gl = launch.backends == Some(eframe::wgpu::Backends::GL);
     let notice = launch.notice.take();
-    let mut options = eframe::NativeOptions {
+    // eframe cannot create its event loop on Android without the activity's handle; without
+    // it `run_native` fails before the window exists and the activity ends on launch.
+    // The handle also resolves the app-private storage below (saves, exports, settings).
+    #[cfg(target_os = "android")]
+    let android_files: Option<std::path::PathBuf> = android_app.as_ref().and_then(|app| {
+        let dir = app.internal_data_path();
+        if dir.is_none() {
+            log::warn!("android storage: no internal data path; save and open stay unavailable");
+        }
+        dir
+    });
+    // Shared storage (`/storage/emulated/0`) is offered as a second browse root beside the
+    // app-private directory, so saves/exports/autosaves can land outside the app dir. Reaching it
+    // needs the user to grant "All files access" in system settings, which the browser asks for
+    // (and the app can only detect, never grant silently).
+    #[cfg(target_os = "android")]
+    let android_shared: Option<std::path::PathBuf> = android_app.as_ref().map(|_| std::path::PathBuf::from("/storage/emulated/0"));
+    let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("EffectCraft")
             .with_inner_size(window::DEFAULT_SIZE)
@@ -203,23 +245,11 @@ fn run_inner(#[cfg(target_os = "android")] android_app: Option<android_activity:
             .with_app_id(appimage::APP_ID),
         event_loop_builder: agent_event_loop(control_port.is_some()),
         wgpu_options: wgpu_options(launch.backends),
+        // The activity's handle resolved above (Android only; the event loop needs it).
+        #[cfg(target_os = "android")]
+        android_app,
         ..Default::default()
     };
-    // eframe cannot create its event loop on Android without the activity's handle; without
-    // it `run_native` fails before the window exists and the activity ends on launch.
-    // The handle also resolves the app-private storage below (saves, exports, settings).
-    #[cfg(target_os = "android")]
-    let android_files: Option<std::path::PathBuf> = android_app.as_ref().and_then(|app| {
-        let dir = app.internal_data_path();
-        if dir.is_none() {
-            log::warn!("android storage: no internal data path; save and open stay unavailable");
-        }
-        dir
-    });
-    #[cfg(target_os = "android")]
-    {
-        options.android_app = android_app;
-    }
     // Start-up milestones go to stderr and the session log, so a window that never appears
     // shows how far start-up got (#234).
     log::info!("effectcraft {}: opening the window", env!("CARGO_PKG_VERSION"));
@@ -383,9 +413,19 @@ fn run_inner(#[cfg(target_os = "android")] android_app: Option<android_activity:
             app.hooks.audio_devices = Some(Box::new(audio_out::devices));
             // The in-app Save / Open Project prompts read and write here (nothing when the
             // storage directory was unavailable: the commands keep their "no dialog" error).
+            // Shared storage is a second browse root, gated on the "All files access" grant.
             #[cfg(target_os = "android")]
-            if let Some(base) = android_files {
-                app.hooks.app_files_dir = Some(base);
+            {
+                if let Some(base) = android_files {
+                    app.hooks.app_files_dir = Some(base);
+                }
+                if let Some(root) = android_shared {
+                    app.hooks.shared_storage_root = Some(root);
+                }
+                if let Some(a) = access {
+                    app.hooks.shared_storage_granted = Some(a.granted);
+                    app.hooks.shared_storage_grant = Some(a.ask);
+                }
             }
             #[cfg(target_os = "macos")]
             {
