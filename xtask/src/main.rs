@@ -407,7 +407,42 @@ fn serve_dir(dir: &std::path::Path, port: u16) -> Result<(), String> {
     Ok(())
 }
 
+/// The guidance printed when the ALSA development package is missing. Split out so the test can
+/// check the package names without needing a machine that is actually missing them.
+fn audio_backend_hint(found: bool) -> Result<(), String> {
+    if found {
+        return Ok(());
+    }
+    Err("Linux audio needs the ALSA development package, and pkg-config cannot find it.\n\
+         The desktop app plays preview sound through cpal, whose alsa-sys dependency asks\n\
+         pkg-config for `alsa`; without the package the build dies minutes later with an\n\
+         unrelated-looking linker error.\n\
+         \n\
+         Fedora:         sudo dnf install alsa-lib-devel\n\
+         Debian/Ubuntu:  sudo apt install libasound2-dev\n\
+         Arch:           sudo pacman -S alsa-lib\n\
+         \n\
+         Install one of those and run `cargo xtask ci` again. If you cannot install it, point\n\
+         PKG_CONFIG_PATH at a directory holding an `alsa.pc` whose Libs line names your system's\n\
+         libasound (usually `libasound.so.2`); every CI run will need that variable set."
+        .into())
+}
+
+/// `cargo xtask ci` builds the desktop app on the host, so on Linux it needs ALSA headers to be
+/// present. Checking here turns a late, confusing link error into one line naming the package.
+#[cfg(target_os = "linux")]
+fn audio_backend() -> Result<(), String> {
+    let found = Command::new("pkg-config").args(["--exists", "alsa"]).status().map(|s| s.success()).unwrap_or(false);
+    audio_backend_hint(found)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn audio_backend() -> Result<(), String> {
+    Ok(())
+}
+
 fn ci() -> Result<(), String> {
+    audio_backend()?;
     let cargo = env!("CARGO");
     run(Command::new(cargo).args(["fmt", "--check"]))?;
     run(Command::new(cargo).args(["clippy", "--workspace", "--all-targets", "--release", "--", "-D", "warnings"]))?;
@@ -448,4 +483,22 @@ fn main() -> ExitCode {
 /// The workspace root (the parent of `xtask/`).
 pub fn root() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("xtask has a parent dir").to_path_buf()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::audio_backend_hint;
+
+    #[test]
+    fn alsa_present_is_not_an_error() {
+        assert!(audio_backend_hint(true).is_ok());
+    }
+
+    #[test]
+    fn alsa_missing_names_the_package_for_each_distro() {
+        let e = audio_backend_hint(false).expect_err("missing ALSA must fail CI");
+        for want in ["alsa-lib-devel", "libasound2-dev", "alsa-lib", "pkg-config", "PKG_CONFIG_PATH"] {
+            assert!(e.contains(want), "hint lost `{want}`:\n{e}");
+        }
+    }
 }
