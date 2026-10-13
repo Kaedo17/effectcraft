@@ -38,6 +38,10 @@ jni = "0.21"
 package = "ai.storyteller.effectcraft"
 apk_name = "effectcraft"
 build_targets = ["aarch64-linux-android"]
+# The launcher icon: `res/mipmap-<density>/ic_launcher.png`, regenerated from the app's own
+# effectcraft.svg by packaging/icons.sh (each PNG carries an attribution sidecar). cargo-apk runs
+# `aapt package -S res`, which is what turns these into the APK's @mipmap/ic_launcher.
+resources = "res"
 
 # "All files access" (`MANAGE_EXTERNAL_STORAGE`): lets the in-app file browser reach shared
 # storage (`/storage/emulated/0`) so a save, export, autosave folder or import can land outside
@@ -53,6 +57,7 @@ target_sdk_version = 35
 [package.metadata.android.application]
 label = "EffectCraft"
 theme = "@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen"
+icon = "@mipmap/ic_launcher"
 
 [package.metadata.android.application.activity]
 config_changes = "orientation|keyboardHidden|screenSize|screenLayout|smallestScreenSize|density|layoutDirection"
