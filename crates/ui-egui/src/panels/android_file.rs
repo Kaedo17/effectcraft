@@ -5,12 +5,15 @@
 //! `AndroidApp::internal_data_path`), the commands' dialogs ([`crate::FileDialog`]) are served
 //! here instead of failing with "no file dialog available": project saves open in `Projects/`,
 //! other saves (frame stills, render output, presets…) in `Exports/`, Open Project lists the
-//! saved projects, and folder picks (Settings ▸ Project ▸ auto-save location…) browse the same
-//! storage. The Save prompts carry a Location row whose browser also creates folders. Media
-//! *import* stays unavailable (it needs the Storage Access Framework).
+//! saved projects (or browses for one anywhere), folder picks (Settings ▸ Project ▸ auto-save
+//! location…) and media *import* browse for them. The Save prompts carry a Location row whose
+//! browser also creates folders. Media import is served too, but only through this browser (no
+//! Storage Access Framework round-trip), so it lists the same two roots below.
 //!
-//! Everything stays inside the app-private base directory: entries are only ever *chosen* from
-//! listings, never typed, so no answer can escape it. The path helpers are platform-independent
+//! The browser browses two roots: the app-private base, and (once "All files access" is
+//! granted) the shared internal storage root. A root's own tree can never be escaped: entries are
+//! only ever *chosen* from listings, never typed, and "Up" is clamped to the current root's top,
+//! so no answer can leave the root the user is browsing. The path helpers are platform-independent
 //! and unit-tested on the host; only the modals and prompt state are Android-gated.
 
 use std::path::{Path, PathBuf};
@@ -78,6 +81,60 @@ pub fn list_dirs(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
+/// The root the folder browser is currently inside: the app-private base, or the shared
+/// internal-storage root once "All files access" is granted.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StorageRoot {
+    /// The app-private directory (`AndroidApp::internal_data_path`), always browsable.
+    App(std::path::PathBuf),
+    /// Shared internal storage (typically `/storage/emulated/0`), browsable only while the
+    /// "All files access" grant holds.
+    Shared(std::path::PathBuf),
+}
+
+impl StorageRoot {
+    /// The directory this root starts at.
+    pub fn dir(&self) -> &Path {
+        match self {
+            StorageRoot::App(base) | StorageRoot::Shared(base) => base,
+        }
+    }
+
+    /// The directory "Up" leads to, clamped to this root's top: the parent while it stays inside
+    /// the root, else the root itself (so the browser can never climb out).
+    pub fn up_from(&self, dir: &Path) -> PathBuf {
+        let root = self.dir();
+        match dir.parent() {
+            Some(parent) if parent.starts_with(root) && parent != root => parent.to_path_buf(),
+            _ => root.to_path_buf(),
+        }
+    }
+}
+
+/// The file names in `dir` whose extension is in `exts` (case-insensitive; an empty `exts`
+/// matches every file), sorted case-insensitively. Directories and unreadable entries are
+/// skipped, never an error.
+pub fn list_files(dir: &Path, exts: &[String]) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+    let mut out: Vec<PathBuf> = entries
+        .flatten()
+        .filter_map(|e| {
+            let path = e.path();
+            let is_file = path.is_file();
+            let matches = exts.is_empty() || path.extension().and_then(|x| x.to_str()).is_some_and(|x| exts.iter().any(|e| x.eq_ignore_ascii_case(e)));
+            (is_file && matches).then_some(path)
+        })
+        .collect();
+    out.sort_by_key(|p| p.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default());
+    out
+}
+
+/// Whether `dir` can be listed (it exists and is readable). The browser uses this to tell an
+/// unreadable root apart from an empty one and offer the "All files access" grant.
+pub fn readable(dir: &Path) -> bool {
+    std::fs::read_dir(dir).is_ok()
+}
+
 /// The pending in-app prompt (lives in the dialog state while the modal is open).
 #[cfg(target_os = "android")]
 #[derive(Clone, Debug, Default)]
@@ -94,6 +151,14 @@ pub struct AndroidFileDraft {
     pub folder: Option<PathBuf>,
     /// The folder browser is open at this directory.
     pub browser: Option<PathBuf>,
+    /// The root the browser is clamped to (`None`: [`StorageRoot::App`] at the base).
+    pub root: Option<StorageRoot>,
+    /// File pick: the files chosen so far (the browser's checkmarks).
+    pub selected: Vec<PathBuf>,
+    /// File pick: extensions to list (empty: every file).
+    pub exts: Vec<String>,
+    /// File pick: several files may be chosen.
+    pub many: bool,
 }
 
 /// Serve a file-dialog request with the in-app prompt: stash it, open the modal, and continue
@@ -109,7 +174,7 @@ pub(crate) fn spawn(
 ) -> Option<Result<serde_json::Value, String>> {
     use serde_json::json;
 
-    if !matches!(request, crate::FileDialog::Save { .. } | crate::FileDialog::OpenProject | crate::FileDialog::Folder) {
+    if !matches!(request, crate::FileDialog::Save { .. } | crate::FileDialog::OpenProject | crate::FileDialog::Folder | crate::FileDialog::Open { .. }) {
         return None;
     }
     if app.dialog.is_some() {
@@ -117,6 +182,10 @@ pub(crate) fn spawn(
     }
     if let crate::FileDialog::Save { ref default, .. } = request {
         app.dialog_state.android_file.name = Path::new(default).file_name().and_then(|n| n.to_str()).unwrap_or(default).to_string();
+    }
+    if let crate::FileDialog::Open { ref exts, many } = request {
+        app.dialog_state.android_file.exts = exts.clone();
+        app.dialog_state.android_file.many = many;
     }
     app.dialog_state.android_file = AndroidFileDraft { request: Some(request), answer: Some(answer), browser: None, ..Default::default() };
     app.dialog = Some(crate::Dialog::AndroidFile);
@@ -172,12 +241,17 @@ pub fn show(app: &mut crate::EffectcraftApp, ctx: &egui::Context, t: &crate::the
         }
         return;
     };
-    // The browser is open (for a folder pick, or a save's Location row): it owns the answer.
+    // The browser is open (for a folder pick, a file pick, or a save's Location row): it owns
+    // the answer.
     if let Some(dir) = app.dialog_state.android_file.browser.clone() {
         browser(app, ctx, t, &base, dir, request);
         return;
     }
     match request {
+        crate::FileDialog::Open { .. } => {
+            // A file request always answers through the browser.
+            app.dialog_state.android_file.browser = Some(app.dialog_state.android_file.folder.clone().unwrap_or_else(|| base.clone()));
+        }
         crate::FileDialog::Save { default, ext: _, project } => {
             let fallback = Path::new(&default).file_name().and_then(|n| n.to_str()).unwrap_or("Untitled.ecproj").to_string();
             let loc = app.dialog_state.android_file.folder.clone().unwrap_or_else(|| save_dir(&base, project));
@@ -214,6 +288,7 @@ pub fn show(app: &mut crate::EffectcraftApp, ctx: &egui::Context, t: &crate::the
             let projects = list_projects(&base);
             let mut open: Option<String> = None;
             let mut cancel = false;
+            let mut browse = false;
             super::dialogs::modal(ctx, "Open Project", egui::vec2(420.0, 320.0), t, |ui| {
                 if projects.is_empty() {
                     ui.label(tr("No saved projects yet."));
@@ -225,10 +300,21 @@ pub fn show(app: &mut crate::EffectcraftApp, ctx: &egui::Context, t: &crate::the
                     }
                 }
                 ui.add_space(8.0);
+                if ui.button(tr("Browse…")).clicked() {
+                    browse = true;
+                }
                 cancel = ui.button(tr("Cancel")).clicked();
             });
             if let Some(path) = open {
                 finish(app, vec![path]);
+            } else if browse {
+                // Open a project from anywhere: switch to the file browser, filtered to project
+                // extensions (the browser reads the filter from the draft, not the request).
+                app.dialog_state.android_file.exts = PROJECT_EXTS.iter().map(|e| e.to_string()).collect();
+                app.dialog_state.android_file.many = false;
+                app.dialog_state.android_file.request =
+                    Some(crate::FileDialog::Open { exts: PROJECT_EXTS.iter().map(|e| e.to_string()).collect(), many: false });
+                app.dialog_state.android_file.browser = Some(base.clone());
             } else if cancel {
                 finish(app, Vec::new());
             }
@@ -237,14 +323,20 @@ pub fn show(app: &mut crate::EffectcraftApp, ctx: &egui::Context, t: &crate::the
             // A folder request always answers through the browser.
             app.dialog_state.android_file.browser = Some(app.dialog_state.android_file.folder.clone().unwrap_or(base));
         }
-        _ => finish(app, Vec::new()),
     }
 }
 
-/// The folder browser: enter sub-folders, create one, or choose the shown directory.
+/// The file/folder browser: switch root, enter sub-folders, create one, choose files (a file
+/// pick) or the shown directory (a folder pick). Clamped to the current [`StorageRoot`].
 #[cfg(target_os = "android")]
 fn browser(app: &mut crate::EffectcraftApp, ctx: &egui::Context, t: &crate::theme::Tokens, base: &Path, dir: PathBuf, request: crate::FileDialog) {
     use crate::i18n::tr;
+
+    let shared = app.hooks.shared_storage_root.clone();
+    let granted = app.hooks.shared_storage_granted.as_ref().is_some_and(|g| g());
+    // The root the browser may not leave: the shared root while inside it, else the app base.
+    let root = app.dialog_state.android_file.root.clone().unwrap_or_else(|| StorageRoot::App(base.to_path_buf()));
+    let is_file = matches!(request, crate::FileDialog::Open { .. });
 
     let mut enter: Option<PathBuf> = None;
     let mut up = false;
@@ -252,34 +344,123 @@ fn browser(app: &mut crate::EffectcraftApp, ctx: &egui::Context, t: &crate::them
     let mut cancel = false;
     let mut create = false;
     let mut new_name = String::new();
-    super::dialogs::modal(ctx, "Choose Folder", egui::vec2(440.0, 380.0), t, |ui| {
-        ui.label(format!("Location: {}", dir.to_string_lossy()));
-        if dir != base && ui.button(tr("Up")).clicked() {
-            up = true;
-        }
-        egui::ScrollArea::vertical().max_height(180.0).auto_shrink([false, true]).show(ui, |ui| {
-            for sub in list_dirs(&dir) {
-                let label = sub.file_name().and_then(|n| n.to_str()).unwrap_or("?");
-                if ui.button(label).clicked() {
-                    enter = Some(sub);
+    let mut toggle: Option<usize> = None;
+    let mut to_shared = false;
+    let mut to_app = false;
+    let mut ask_grant = false;
+    super::dialogs::modal(ctx, if is_file { "Choose Files" } else { "Choose Folder" }, egui::vec2(440.0, 380.0), t, |ui| {
+        // Root switcher: App storage ↔ Shared storage (the latter only once granted).
+        ui.horizontal(|ui| {
+            let in_shared = matches!(root, StorageRoot::Shared(_));
+            let app_btn = ui.selectable_label(!in_shared, tr("App storage"));
+            if app_btn.clicked() {
+                to_app = true;
+            }
+            if let Some(_sroot) = &shared {
+                let label = if granted { tr("Shared storage") } else { tr("Shared storage (grant access)") };
+                let sh_btn = ui.selectable_label(in_shared, label);
+                if sh_btn.clicked() {
+                    if granted {
+                        to_shared = true;
+                    } else {
+                        ask_grant = true;
+                    }
                 }
             }
         });
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut new_name).hint_text(tr("New folder")).desired_width(160.0));
-            create = ui.button(tr("Create")).clicked();
+        ui.label(format!("Location: {}", dir.to_string_lossy()));
+        if dir != root.dir() && ui.button(tr("Up")).clicked() {
+            up = true;
+        }
+        let dirs = list_dirs(&dir);
+        let files: Vec<PathBuf> = if is_file {
+            let exts: Vec<String> = app.dialog_state.android_file.exts.clone();
+            list_files(&dir, &exts)
+        } else {
+            Vec::new()
+        };
+        let selected = app.dialog_state.android_file.selected.clone();
+        if dirs.is_empty() && files.is_empty() {
+            // An unreadable shared root is the grant not yet held, not an empty folder.
+            if matches!(root, StorageRoot::Shared(_)) && !readable(&dir) {
+                ui.label(tr("This folder can't be read yet. Grant EffectCraft access to all files."));
+                if ui.button(tr("Grant access")).clicked() {
+                    ask_grant = true;
+                }
+            } else {
+                ui.label(tr("(empty)"));
+            }
+        }
+        egui::ScrollArea::vertical().max_height(180.0).auto_shrink([false, true]).show(ui, |ui| {
+            for sub in dirs {
+                let label = sub.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+                if ui.button(format!("{label}/")).clicked() {
+                    enter = Some(sub);
+                }
+            }
+            for (i, file) in files.iter().enumerate() {
+                let label = file.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+                let is_sel = selected.contains(file);
+                let mark = if is_file && is_sel { "✓ " } else { "" };
+                if ui.button(format!("{mark}{label}")).clicked() {
+                    toggle = Some(i);
+                }
+            }
         });
+        if is_file {
+            let n = app.dialog_state.android_file.selected.len();
+            ui.label(if n == 0 { tr("Tap files to select them.").to_string() } else { format!("{n} selected") });
+        } else {
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.add(egui::TextEdit::singleline(&mut new_name).hint_text(tr("New folder")).desired_width(160.0));
+                create = ui.button(tr("Create")).clicked();
+            });
+        }
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            choose = ui.button(tr("Choose this folder")).clicked();
+            choose = ui.button(if is_file { tr("Open") } else { tr("Choose this folder") }).clicked();
             cancel = ui.button(tr("Cancel")).clicked();
         });
     });
-    if let Some(sub) = enter {
+
+    if ask_grant {
+        if let Some(ask) = app.hooks.shared_storage_grant.as_ref() {
+            ask();
+            app.ui.status = "Allow \"All files access\" for EffectCraft, then tap Shared storage.".into();
+        } else {
+            app.ui.status = "This build can't request shared-storage access.".into();
+        }
+    } else if to_app {
+        app.dialog_state.android_file.root = Some(StorageRoot::App(base.to_path_buf()));
+        app.dialog_state.android_file.browser = Some(base.to_path_buf());
+    } else if to_shared && let Some(sroot) = shared.clone() {
+        app.dialog_state.android_file.root = Some(StorageRoot::Shared(sroot.clone()));
+        app.dialog_state.android_file.browser = Some(sroot);
+    } else if let Some(i) = toggle {
+        let files: Vec<PathBuf> = {
+            let exts = app.dialog_state.android_file.exts.clone();
+            list_files(&dir, &exts)
+        };
+        if let Some(file) = files.get(i) {
+            let d = &mut app.dialog_state.android_file;
+            if d.many {
+                if let Some(pos) = d.selected.iter().position(|f| f == file) {
+                    d.selected.remove(pos);
+                } else {
+                    d.selected.push(file.clone());
+                }
+            } else {
+                d.selected = vec![file.clone()];
+                // A single-file pick answers as soon as a file is tapped.
+                let picked: Vec<String> = d.selected.iter().map(|p| p.to_string_lossy().to_string()).collect();
+                finish(app, picked);
+            }
+        }
+    } else if let Some(sub) = enter {
         app.dialog_state.android_file.browser = Some(sub);
-    } else if up && let Some(parent) = dir.parent().map(Path::to_path_buf) {
-        app.dialog_state.android_file.browser = Some(parent.max(base.to_path_buf()));
+    } else if up {
+        app.dialog_state.android_file.browser = Some(root.up_from(&dir));
     } else if create {
         let name = sanitize_name(&new_name, "");
         if name.is_empty() {
@@ -292,15 +473,29 @@ fn browser(app: &mut crate::EffectcraftApp, ctx: &egui::Context, t: &crate::them
             }
         }
     } else if choose {
-        app.dialog_state.android_file.browser = None;
-        app.dialog_state.android_file.folder = Some(dir.clone());
-        if matches!(request, crate::FileDialog::Folder) {
-            finish(app, vec![dir.to_string_lossy().to_string()]);
+        if is_file {
+            let picked: Vec<String> = app.dialog_state.android_file.selected.iter().map(|p| p.to_string_lossy().to_string()).collect();
+            if picked.is_empty() {
+                app.ui.status = "Select at least one file.".into();
+            } else {
+                finish(app, picked);
+            }
+        } else {
+            app.dialog_state.android_file.browser = None;
+            app.dialog_state.android_file.folder = Some(dir.clone());
+            if matches!(request, crate::FileDialog::Folder) {
+                finish(app, vec![dir.to_string_lossy().to_string()]);
+            }
         }
     } else if cancel {
-        app.dialog_state.android_file.browser = None;
-        if matches!(request, crate::FileDialog::Folder) {
+        if is_file {
+            // A file pick's Cancel answers the command as cancelled.
             finish(app, Vec::new());
+        } else {
+            app.dialog_state.android_file.browser = None;
+            if matches!(request, crate::FileDialog::Folder) {
+                finish(app, Vec::new());
+            }
         }
     }
 }
@@ -370,6 +565,47 @@ mod tests {
         std::fs::write(dir.join("a-file.txt"), "x").unwrap();
         assert_eq!(list_dirs(&dir), vec![dir.join("Alpha"), dir.join("zeta")]);
         assert!(list_dirs(&dir.join("missing")).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn up_is_clamped_to_the_root() {
+        let app = StorageRoot::App("/files".into());
+        assert_eq!(app.dir(), Path::new("/files"));
+        assert_eq!(app.up_from(Path::new("/files/Projects/Deep")), PathBuf::from("/files/Projects"));
+        assert_eq!(app.up_from(Path::new("/files/Projects")), PathBuf::from("/files"));
+        // The root's own top is as far up as the browser may go — never out of the root.
+        assert_eq!(app.up_from(Path::new("/files")), PathBuf::from("/files"));
+        let shared = StorageRoot::Shared("/storage/emulated/0".into());
+        assert_eq!(shared.up_from(Path::new("/storage/emulated/0/DCIM/Cam")), PathBuf::from("/storage/emulated/0/DCIM"));
+        assert_eq!(shared.up_from(Path::new("/storage/emulated/0")), PathBuf::from("/storage/emulated/0"));
+    }
+
+    #[test]
+    fn files_list_filtered_by_extension_sorted() {
+        let dir = std::env::temp_dir().join(format!("ec-android-files2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("Clip.MP4"), "x").unwrap();
+        std::fs::write(dir.join("still.png"), "x").unwrap();
+        std::fs::write(dir.join("notes.txt"), "x").unwrap();
+        let mp4: Vec<String> = vec!["mp4".to_string()];
+        let listed = list_files(&dir, &mp4);
+        // Case-insensitive match, directories never listed.
+        assert_eq!(listed, vec![dir.join("Clip.MP4")]);
+        // An empty filter matches every file, sorted, still excluding directories.
+        assert_eq!(list_files(&dir, &[]), vec![dir.join("Clip.MP4"), dir.join("notes.txt"), dir.join("still.png")]);
+        assert!(list_files(&dir.join("missing"), &[]).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn readable_tells_an_unreadable_folder_from_an_empty_one() {
+        let dir = std::env::temp_dir().join(format!("ec-android-read-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(!readable(&dir));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(readable(&dir));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -2,9 +2,10 @@
 //! `AndroidApp::internal_data_path` directory.
 //!
 //! Android has no system file picker in v1 (rfd has no backend there), so saves, render outputs
-//! and settings live in private storage: no permissions, no Storage Access Framework round-trip,
-//! but invisible to the Files app. Pure path logic, unit-tested on the host; the handle comes
-//! from `run_android` (`apps/effectcraft/src/lib.rs`).
+//! and settings default to private storage: no permissions, no Storage Access Framework
+//! round-trip, though invisible to the Files app (the in-app browser can additionally reach
+//! shared storage once "All files access" is granted). Pure path logic, unit-tested on the host;
+//! the handle comes from `run_android` (`apps/effectcraft/src/lib.rs`).
 
 use std::path::{Path, PathBuf};
 
