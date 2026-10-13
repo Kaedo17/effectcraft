@@ -507,7 +507,7 @@ fn startup_failed(e: &eframe::Error, gl_next: bool) {
     );
     // Standard error and the session log; standard error alone when RUST_LOG turned errors off.
     if log::log_enabled!(log::Level::Error) {
-    #[cfg(not(target_os = "android"))]
+        #[cfg(not(target_os = "android"))]
         log::error!("{message}");
     } else {
         eprintln!("effectcraft: {message}");
