@@ -608,8 +608,28 @@ pub fn any_menu_open(ctx: &egui::Context) -> bool {
 /// (Window ▸ Workspace) got stuck at that height with its last entries scrolled out of view
 /// (#191).
 pub fn menu_scroll<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
-    let max_h = ui.ctx().content_rect().height() - 40.0;
-    egui::ScrollArea::vertical().max_height(max_h).min_scrolled_height(max_h).show(ui, add).inner
+    menu_scroll_area(ui.ctx().content_rect().height() - 40.0).show(ui, add).inner
+}
+
+/// The scroll area every menu body runs in: `max_h` points tall, and draggable to scroll with any
+/// pointer. See [`menu_drag`] for why the drag is forced on.
+fn menu_scroll_area(max_h: f32) -> egui::ScrollArea {
+    egui::ScrollArea::vertical()
+        .scroll_source(egui::containers::scroll_area::ScrollSource { drag: menu_drag(), ..egui::containers::scroll_area::ScrollSource::ALL })
+        .max_height(max_h)
+        .min_scrolled_height(max_h)
+}
+
+/// How a menu's contents respond to a drag: always, with the scroll bar and the wheel too.
+///
+/// egui's own default (`DragScroll::OnTouch`) switches drag-to-scroll on only once
+/// `InputState::has_touch_screen` has seen an `Event::Touch`, and on the Android build it never
+/// had one — a finger drag on the Edit menu was swallowed whole, so the rows below the fold (Select
+/// All through Preferences, the last of about 42) could not be reached at all (#269). A menu must
+/// never depend on that detection: if it is taller than the window it has to scroll, whatever
+/// pointer the user is holding.
+fn menu_drag() -> egui::containers::scroll_area::DragScroll {
+    egui::containers::scroll_area::DragScroll::Always
 }
 
 /// egui's menu style with no gap between the rows: the gap the app's item spacing left between
@@ -724,5 +744,37 @@ mod tests {
             let r = got.expect("the field was drawn");
             assert!((r.center().y - field.center().y).abs() < 0.5 && r.height() >= h - 2.5, "{h}: {r:?} in {field:?}");
         }
+    }
+
+    /// #269: a menu taller than its window has to be scrollable, and the Edit menu on a phone in
+    /// landscape is exactly that — about 42 rows against 26 visible, with Select All, Label, Purge,
+    /// Templates, Keyboard Shortcuts and Preferences all below the fold.
+    #[test]
+    fn a_menu_taller_than_the_window_scrolls_by_drag() {
+        // egui's default scroll source is `DragScroll::OnTouch`, which switches drag-to-scroll on
+        // only once `InputState::has_touch_screen` has seen an `Event::Touch`. It never had on the
+        // Android build, so a finger drag was swallowed whole and the rows below the fold could not
+        // be reached at all. The menu body must never depend on that detection.
+        assert_eq!(menu_drag(), egui::containers::scroll_area::DragScroll::Always, "menus must drag-scroll before egui has seen a touch event");
+
+        // And the layout really does overflow: in a 300 pt window (a phone in landscape is barely
+        // taller) the last of 42 rows starts below the bottom edge, so without scrolling the menu
+        // simply runs off the screen.
+        let ctx = egui::Context::default();
+        let screen = Rect::from_min_size(pos2(0.0, 0.0), vec2(400.0, 300.0));
+        let mut last_y = f32::MAX;
+        let input = egui::RawInput { screen_rect: Some(screen), ..Default::default() };
+        let mut out = ctx.run_ui(input, |ui| {
+            menu_scroll(ui, |ui| {
+                for i in 0..42 {
+                    let r = ui.label(format!("row {i}"));
+                    if i == 41 {
+                        last_y = r.rect.min.y;
+                    }
+                }
+            });
+        });
+        out.textures_delta.clear();
+        assert!(last_y > screen.height(), "the test menu must overflow its window: last row at {last_y} pt of {}", screen.height());
     }
 }
