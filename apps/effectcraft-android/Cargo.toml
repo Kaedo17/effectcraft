@@ -12,9 +12,11 @@ crate-type = ["cdylib"]
 
 # This crate deliberately does not inherit the workspace lints. Android's NativeActivity ABI
 # requires an unmangled android_main export, and on edition 2024 that spelling
-# (#[unsafe(no_mangle)]) trips rust's unsafe_code lint, which the workspace forbids. The crate
-# holds no unsafe logic — one export attribute on a safe trampoline that calls effectcraft::run
-# and logs its result — so it denies everything else instead.
+# (#[unsafe(no_mangle)]) trips rust's unsafe_code lint, which the workspace forbids. It also
+# holds the one piece of real unsafe in the project: android_access.rs's JNI entry points to the
+# activity's raw JVM (JavaVM/JObject from_raw have no safe form), needed to check and request
+# the "All files access" grant — unsafe lives in this entry trampoline, never in the shared
+# effectcraft/ui-egui crates, which receive plain closures instead. Everything else is denied.
 [lints.clippy]
 unwrap_used = "deny"
 expect_used = "deny"
@@ -29,11 +31,20 @@ log = { workspace = true }
 
 [target.'cfg(target_os = "android")'.dependencies]
 android-activity = { version = "0.6", default-features = false, features = ["native-activity"] }
+# The "All files access" grant (android_access.rs): same 0.21 instance cpal already pulls in.
+jni = "0.21"
 
 [package.metadata.android]
 package = "ai.storyteller.effectcraft"
 apk_name = "effectcraft"
 build_targets = ["aarch64-linux-android"]
+
+# "All files access" (`MANAGE_EXTERNAL_STORAGE`): lets the in-app file browser reach shared
+# storage (`/storage/emulated/0`) so a save, export, autosave folder or import can land outside
+# the app-private directory. It is a special permission the app can never hold silently — the
+# user grants it on the system settings page the browser opens (`android_access.rs`) — so the
+# manifest entry alone changes nothing until they do.
+uses_permission = [{ name = "android.permission.MANAGE_EXTERNAL_STORAGE" }]
 
 [package.metadata.android.sdk]
 min_sdk_version = 28

@@ -1173,6 +1173,7 @@ version = "0.8.0"
 dependencies = [
  "android-activity",
  "effectcraft",
+ "jni 0.21.1",
  "log",
 ]
 
