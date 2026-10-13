@@ -465,6 +465,9 @@ fn startup_failed(e: &eframe::Error, gl_next: bool) {
     } else {
         eprintln!("effectcraft: {message}");
     }
+    // No message dialog on Android (rfd has no backend there): stderr already carries the
+    // message into logcat, and the activity's thread ends.
+    #[cfg(not(target_os = "android"))]
     let _ = rfd::MessageDialog::new()
         .set_level(rfd::MessageLevel::Error)
         .set_title("EffectCraft")
