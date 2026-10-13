@@ -625,9 +625,9 @@ fn menu_scroll_area(max_h: f32) -> egui::ScrollArea {
 /// egui's own default (`DragScroll::OnTouch`) switches drag-to-scroll on only once
 /// `InputState::has_touch_screen` has seen an `Event::Touch`, and on the Android build it never
 /// had one — a finger drag on the Edit menu was swallowed whole, so the rows below the fold (Select
-/// All through Preferences, the last of about 42) could not be reached at all (#269). A menu must
-/// never depend on that detection: if it is taller than the window it has to scroll, whatever
-/// pointer the user is holding.
+/// All through Preferences, the last of 34) could not be reached at all (#269). A menu must never
+/// depend on that detection: if it is taller than the window it has to scroll, whatever pointer
+/// the user is holding.
 fn menu_drag() -> egui::containers::scroll_area::DragScroll {
     egui::containers::scroll_area::DragScroll::Always
 }
@@ -747,8 +747,8 @@ mod tests {
     }
 
     /// #269: a menu taller than its window has to be scrollable, and the Edit menu on a phone in
-    /// landscape is exactly that — about 42 rows against 26 visible, with Select All, Label, Purge,
-    /// Templates, Keyboard Shortcuts and Preferences all below the fold.
+    /// landscape is exactly that — 34 rows against the 21 that fit, with Select All, Label, Purge,
+    /// Templates, Keyboard Shortcuts and Preferences below the fold.
     #[test]
     fn a_menu_taller_than_the_window_scrolls_by_drag() {
         // egui's default scroll source is `DragScroll::OnTouch`, which switches drag-to-scroll on
