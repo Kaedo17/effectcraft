@@ -663,9 +663,21 @@ mod tests {
         ctx.run_ui(Default::default(), |_| {}).textures_delta.clear();
         for family in [FontFamily::Proportional, FontFamily::Monospace, FontFamily::Name("medium".into()), FontFamily::Name("semibold".into())] {
             let id = FontId::new(12.0, family);
-            for c in "▸•›·▶◀●○⚠…×".chars() {
-                assert!(ctx.fonts_mut(|f| f.has_glyph(&id, c)), "{c} has no glyph in {id:?}");
-            }
+            ctx.fonts_mut(|fonts| {
+                // Not `has_glyph`: it compares face keys and reports a false negative whenever a
+                // real glyph shares the replacement face, as `script_font_tests` notes. It called
+                // every one of these symbols missing while all of them drew, and which way it went
+                // turned on what the machine had installed. Compare the atlas entry like that
+                // module does, which is what "has a glyph" has to mean anyway.
+                let missing = fonts.layout_no_wrap("\u{10ffff}".into(), id.clone(), egui::Color32::WHITE);
+                let missing_uv = missing.rows[0].glyphs[0].uv_rect;
+                for c in "▸•›·▶◀●○⚠…×".chars() {
+                    let rendered = fonts.layout_no_wrap(c.to_string(), id.clone(), egui::Color32::WHITE);
+                    let uv = rendered.rows[0].glyphs[0].uv_rect;
+                    assert!(uv.size.x > 0.0 && uv.size.y > 0.0, "{c} draws nothing in {id:?}");
+                    assert_ne!((uv.min, uv.max), (missing_uv.min, missing_uv.max), "{c} draws a missing-glyph box in {id:?}");
+                }
+            });
         }
     }
 
