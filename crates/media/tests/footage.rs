@@ -24,6 +24,24 @@ fn have_ffmpeg() -> bool {
     *HAVE.get_or_init(|| Command::new("ffmpeg").arg("-version").output().is_ok_and(|o| o.status.success()))
 }
 
+/// An H.264 encoder this ffmpeg build actually ships, or `None` when it has none. Distro "free"
+/// builds often omit `libx264` (the one named historically here) but ship an alternative, so pick
+/// the first present by name rather than hard-coding one that may be absent. These tests only
+/// need *an* H.264 encoder to make an oracle fixture; the encoder identity is irrelevant.
+fn h264_encoder() -> Option<&'static str> {
+    static ENC: std::sync::OnceLock<Option<&'static str>> = std::sync::OnceLock::new();
+    *ENC.get_or_init(|| {
+        let out = Command::new("ffmpeg").args(["-hide_banner", "-encoders"]).output().ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let text = String::from_utf8_lossy(&out.stdout);
+        ["libx264", "libopenh264", "h264_nvenc", "h264_vaapi", "h264_qsv", "h264_v4l2m2m", "h264_amf"]
+            .into_iter()
+            .find(|name| text.lines().any(|l| l.split_whitespace().any(|tok| tok == *name)))
+    })
+}
+
 /// Run ffmpeg to produce `name` (once; written to a temp name and renamed so concurrent test
 /// processes never see a partial file). `None` when ffmpeg is unavailable.
 fn ffmpeg_fixture(name: &str, args: &[&str]) -> Option<PathBuf> {
@@ -45,6 +63,7 @@ fn ffmpeg_fixture(name: &str, args: &[&str]) -> Option<PathBuf> {
 }
 
 fn h264_mp4() -> Option<PathBuf> {
+    let enc = h264_encoder()?;
     ffmpeg_fixture(
         "testsrc2_1080p.mp4",
         &[
@@ -57,7 +76,7 @@ fn h264_mp4() -> Option<PathBuf> {
             "-i",
             "sine=frequency=440:sample_rate=48000:duration=2",
             "-c:v",
-            "libx264",
+            enc,
             "-pix_fmt",
             "yuv420p",
             "-preset",
@@ -277,6 +296,7 @@ fn h264_audio_samples() {
 /// H.264 + AAC at 44.1 kHz in MP4 (ffmpeg writes an edit list that skips the AAC priming):
 /// 440 Hz left, a 200 → 1000 Hz sweep right, 29.97 fps.
 fn aac_44k_mp4() -> Option<PathBuf> {
+    let enc = h264_encoder()?;
     ffmpeg_fixture(
         "aac_44k.mp4",
         &[
@@ -289,7 +309,7 @@ fn aac_44k_mp4() -> Option<PathBuf> {
             "-i",
             "aevalsrc=0.5*sin(2*PI*440*t)|0.5*sin(2*PI*(200+400*t/3)*t):s=44100:d=3",
             "-c:v",
-            "libx264",
+            enc,
             "-pix_fmt",
             "yuv420p",
             "-c:a",
