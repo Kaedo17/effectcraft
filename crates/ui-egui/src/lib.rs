@@ -100,8 +100,9 @@ pub enum Dialog {
     /// Delete a user template from Home? (`panels::templates`).
     DeleteTemplate,
     /// Android's in-app Save / Open Project prompt (`panels::android_file`): no system
-    /// picker exists there, so the app-private storage directory answers instead.
-    #[cfg(target_os = "android")]
+    /// picker exists there, so the app-private storage directory answers instead. Served on
+    /// any host that sets [`Hooks::app_files_dir`] (the commands' file dialogs then need no
+    /// blocking picker), so the dialog compiles and is tested on every platform.
     AndroidFile,
 }
 
@@ -171,23 +172,20 @@ pub struct Hooks {
     /// the commands' dialogs (File ▸ Import, Open, Save As…) where a modal dialog's nested event
     /// loop inside a frame is unsafe: on macOS a drag over the window then aborted the app (#511).
     pub file_dialog_async: Option<Box<dyn Fn(FileDialog, DialogDone)>>,
-    /// The app-private storage directory on Android (`AndroidApp::internal_data_path`), where the
-    /// in-app Save / Open Project prompts read and write. `None` elsewhere (or when it could not
-    /// be resolved): the commands fail with "no file dialog available", as before.
-    #[cfg(target_os = "android")]
+    /// The app-private storage directory a host serves the in-app Save / Open Project prompts
+    /// from (`AndroidApp::internal_data_path` on Android), where the in-app prompts read and
+    /// write. `None` elsewhere (or when it could not be resolved): the commands fall through
+    /// to the blocking pickers, or fail with "no file dialog available", as before.
     pub app_files_dir: Option<std::path::PathBuf>,
-    /// Android's shared internal-storage root (`/storage/emulated/0`), offered as a second
+    /// The shared internal-storage root (`/storage/emulated/0` on Android), offered as a second
     /// browse root beside the app-private directory once "All files access" is granted.
     /// `None` elsewhere (or when it could not be resolved).
-    #[cfg(target_os = "android")]
     pub shared_storage_root: Option<std::path::PathBuf>,
-    /// Whether Android's "All files access" (`MANAGE_EXTERNAL_STORAGE`) is currently granted.
+    /// Whether the host's "All files access" (`MANAGE_EXTERNAL_STORAGE`) is currently granted.
     /// `None` elsewhere.
-    #[cfg(target_os = "android")]
     pub shared_storage_granted: Option<Box<dyn Fn() -> bool>>,
     /// Asks the user to grant "All files access" (the system settings page on Android 11+, the
     /// permission dialog before that). `None` elsewhere.
-    #[cfg(target_os = "android")]
     pub shared_storage_grant: Option<Box<dyn Fn()>>,
     /// Tells the user the graphics device was lost and the window is closing, once. `saved` is
     /// the auto-save of unsaved changes (`None`: nothing was unsaved), its path or why it failed.

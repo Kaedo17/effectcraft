@@ -54,10 +54,14 @@ pub const LIGHT_THEMES: &[(&str, &str)] = &[("Light", "light")];
 /// Every theme (the legacy single-theme `appearance.theme`).
 pub const THEMES: &[(&str, &str)] = &[("Dark", "dark"), ("Darker", "darker"), ("Light", "light")];
 
+/// The in-app file picker's view: (label, `general.pickerView` value).
+pub const PICKER_VIEWS: &[(&str, &str)] = &[("List", "list"), ("Small", "small"), ("Medium", "medium"), ("Large", "large")];
+
 /// The settings whose value must be one of their choices.
 fn choices(key: &str) -> Option<&'static [(&'static str, &'static str)]> {
     match key {
         "general.language" => Some(LANGUAGES),
+        "general.pickerView" => Some(PICKER_VIEWS),
         "startup.windowGraphics" => Some(WINDOW_GRAPHICS),
         "appearance.appearanceMode" => Some(APPEARANCE_MODES),
         "appearance.darkTheme" => Some(DARK_THEMES),
@@ -114,6 +118,9 @@ page!(General {
     use_system_color_picker: bool = false,
     /// Number of projects in File ▸ Open Recent.
     recent_items: u32 = 10,
+    /// The in-app file picker's view: one of `PICKER_VIEWS` (`list`, `small`, `medium`,
+    /// `large` icons), changed with the picker's own view buttons and remembered.
+    picker_view: String = "large".into(),
 });
 
 page!(Startup {
@@ -603,6 +610,9 @@ impl Prefs {
         let g = &mut self.general;
         if !is_choice(LANGUAGES, &g.language) {
             g.language = General::default().language;
+        }
+        if !is_choice(PICKER_VIEWS, &g.picker_view) {
+            g.picker_view = General::default().picker_view;
         }
         g.undo_levels = g.undo_levels.clamp(1, 99);
         g.path_point_size = g.path_point_size.clamp(3, 20);

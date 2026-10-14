@@ -161,6 +161,23 @@ fn appearance_choices_validate_and_legacy_theme_still_selects() {
     assert_eq!(s.prefs.appearance, crate::prefs::Appearance::default());
 }
 
+/// The file picker's view accepts only its choices, defaults to Large icons, and a settings
+/// file edited by hand to an unknown view is repaired on load instead of breaking the picker.
+#[test]
+fn picker_view_validates_and_repairs() {
+    let mut p = Prefs::default();
+    assert_eq!(p.general.picker_view, "large");
+    p.set("general.pickerView", json!("list")).unwrap();
+    assert_eq!(p.get("general.pickerView"), Some(json!("list")));
+    assert!(p.set("general.pickerView", json!("huge")).is_err(), "only its choices");
+    // It survives the round trip through the settings file.
+    let p2 = Prefs::from_json(&p.to_json());
+    assert_eq!(p2.general.picker_view, "list");
+    // A hand-edited value falls back to the default on load.
+    let p3 = Prefs::from_json(&json!({"version": 2, "general": {"pickerView": "huge"}}).to_string());
+    assert_eq!(p3.general.picker_view, "large");
+}
+
 #[test]
 fn every_schema_key_exists_and_docs_list_the_todo_settings() {
     let p = Prefs::default();

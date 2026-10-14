@@ -51,6 +51,7 @@ pub mod settings;
 pub mod shortcut_editor;
 pub mod templates;
 pub mod text_panels;
+pub mod thumbs;
 pub mod timeline;
 pub mod tracker;
 pub mod unsaved;
