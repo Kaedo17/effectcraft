@@ -1397,10 +1397,9 @@ fn file_dialog(app: &mut EffectcraftApp, id: &str, params: &Value) -> Option<Res
         );
         return Some(Ok(json!({"dialog": id})));
     }
-    // Android serves Save, Open Project, folder picks and media import with its in-app browser
-    // (app-private storage, plus shared storage once "All files access" is granted) once the
-    // host resolved the directory.
-    #[cfg(target_os = "android")]
+    // The in-app browser serves Save, Open Project, folder picks and media import once the
+    // host resolved the storage directory (the Android host always has; other hosts have no
+    // `app_files_dir` and keep the blocking pickers below).
     if app.hooks.app_files_dir.is_some() {
         let request = match &ask {
             Ask::Save(default) => crate::FileDialog::save(default),
