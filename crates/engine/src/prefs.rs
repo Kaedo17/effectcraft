@@ -187,7 +187,7 @@ page!(Appearance {
     favorite_themes: Vec<String> = Vec::new(),
     /// User interface brightness, -1 (darker) … 1 (lighter).
     brightness: f64 = 0.0,
-    /// The size of the whole interface in percent (75–200), on top of the display's own scale.
+    /// The size of the whole interface in percent (50–200), on top of the display's own scale.
     ui_scale: u32 = 100,
     use_label_color_for_handles: bool = true,
     use_label_color_for_tabs: bool = true,
@@ -641,7 +641,7 @@ impl Prefs {
             _ => {}
         }
         self.appearance.brightness = self.appearance.brightness.clamp(-1.0, 1.0);
-        self.appearance.ui_scale = self.appearance.ui_scale.clamp(75, 200);
+        self.appearance.ui_scale = self.appearance.ui_scale.clamp(50, 200);
         let defaults = default_labels();
         self.labels.truncate(defaults.len());
         for d in defaults.iter().skip(self.labels.len()) {
@@ -1244,7 +1244,7 @@ pub fn pages() -> Vec<Page> {
                 s("appearance.lightTheme", "Light Theme", Kind::Choice(LIGHT_THEMES), true),
                 s("appearance.darkTheme", "Dark Theme", Kind::Choice(DARK_THEMES), true),
                 s("appearance.brightness", "Brightness", Kind::Slider(-1.0, 1.0), true),
-                s("appearance.uiScale", "UI Scale", Kind::Int(75, 200, "%"), true),
+                s("appearance.uiScale", "UI Scale", Kind::Int(50, 200, "%"), true),
                 Section("Labels and Colors"),
                 s("appearance.useLabelColorForHandles", "Use Label Color for Layer Handles and Paths", B, true),
                 s("appearance.useLabelColorForTabs", "Use Label Color for Related Tabs", B, true),
