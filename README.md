@@ -57,7 +57,10 @@ this section is what is different about running it on a device.
   EffectCraft's own launcher icon at five densities.
 - **Touch:** a menu taller than the screen scrolls when you drag it. On a phone in landscape the
   Edit menu has 34 rows and room for 21, so this is the difference between reaching Preferences
-  and not.
+  and not. Panels that lay out their own rows (Effects & Presets, Properties, Effect Controls,
+  Preview, Info, the media and render-queue lists…) scroll when you drag their empty space, and
+  every scroll bar — including the timeline's layer list — drags under a finger: its track is
+  4 points wide with a 20-point target around it.
 
 ### Building the APK
 
