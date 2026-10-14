@@ -722,30 +722,20 @@ pub fn show(app: &mut EffectcraftApp, ctx: &egui::Context, t: &Tokens) {
                 }
             }
             Act::PickFolder(k) => {
-                // Android has no blocking folder dialog: the in-app browser answers while the
-                // Settings dialog stays open.
-                #[cfg(target_os = "android")]
+                // A host without a blocking folder dialog (Android) answers through the
+                // in-app browser while the Settings dialog stays open.
                 if app.hooks.app_files_dir.is_some() && app.hooks.pick_folder.is_none() {
                     crate::panels::android_file::pick_folder_pref(app, &k);
                 } else if let Some(f) = app.hooks.pick_folder.as_ref().and_then(|f| f()) {
                     let _ = app.session.prefs.set(&k, json!(f));
                     app.session.prefs_changed();
                 }
-                #[cfg(not(target_os = "android"))]
-                if let Some(f) = app.hooks.pick_folder.as_ref().and_then(|f| f()) {
-                    let _ = app.session.prefs.set(&k, json!(f));
-                    app.session.prefs_changed();
-                }
             }
             Act::PickProject(k) => {
-                // Android has no blocking file dialog: the in-app browser answers while the
-                // Settings dialog stays open, as `Act::PickFolder` does. Without this branch
-                // the button did nothing at all on Android.
-                #[cfg(target_os = "android")]
+                // As `Act::PickFolder`: without the in-app browser the button did nothing at
+                // all on a host with no blocking file dialog.
                 let opened =
                     app.hooks.app_files_dir.is_some() && app.hooks.pick_open_project.is_none() && crate::panels::android_file::pick_project_pref(app, &k);
-                #[cfg(not(target_os = "android"))]
-                let opened = false;
                 let picked: Option<String> = if opened { None } else { app.hooks.pick_open_project.as_ref().and_then(|f| f()) };
                 if let Some(f) = picked {
                     let _ = app.session.prefs.set(&k, json!(f));

@@ -34,6 +34,7 @@ Commands (CLI, MCP, control channel):
 - `general.undoLevels`: Levels of Undo
 - `general.pathPointSize`: Path Point and Handle Size
 - `general.recentItems`: Recent Projects Shown
+- `general.pickerView`: the in-app file picker's view (`list` / `small` / `medium` / `large` icons, default `large`), switched with the picker's own View buttons and remembered across dialogs; both the file browser and the Open Project list use it (a host that serves the in-app picker — Android — only)
 - `general.showToolTips`: Show Tool Tips
 - `general.createLayersAtCompStart`: Create Layers at Composition Start Time
 - `general.defaultSpatialLinear`: Default Spatial Interpolation to Linear
