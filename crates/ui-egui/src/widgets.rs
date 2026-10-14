@@ -460,7 +460,10 @@ impl PanelScroll {
         // so whatever the panel draws on top — fields, buttons, rows that drag to apply — wins
         // the pointer as it always did, and this only takes the drags that start on the panel's
         // own empty space.
-        let drag = ui.interact(area, id.with("panel-scroll-drag"), Sense::drag());
+        // Inset a few points from the panel's edges: the dock's resize gutters reach into the
+        // content rect (their hit is the gap expanded by 3), and they register before the panel
+        // does — a finger aiming at a divider must never land on the scroll surface instead.
+        let drag = ui.interact(area.shrink(4.0), id.with("panel-scroll-drag"), Sense::drag());
         if drag.dragged() {
             // With the finger: the content follows it, so down moves the offset towards zero.
             offset -= drag.drag_delta().y;
