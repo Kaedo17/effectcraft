@@ -52,6 +52,11 @@ Desktop, Cursor and the like) take the same `command` and `args`.
 - **Bridge** (`["mcp", "--bridge", "9877"]`): drives a running `effectcraft --control 9877`, so you
   see every change live. Bridge mode adds `screenshot` and the `ui_*` tools.
 
+After a broken connection, the bridge retries explicitly read-only control queries once.
+Engine commands, UI edits and unknown methods whose transmission or reply fails report an
+unknown outcome: the app may already have applied them. Inspect the app before explicitly
+retrying. A later call reconnects; timeouts and malformed replies are never automatically resent.
+
 ### From an installed release
 
 The release packages ship `effectcraft-cli` alongside the desktop app, so no build is needed:
