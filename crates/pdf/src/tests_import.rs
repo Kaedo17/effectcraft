@@ -376,3 +376,25 @@ fn postscript_radix_numbers_outside_2_to_36_are_not_numbers() {
         let _ = parse(src.as_bytes());
     }
 }
+
+#[test]
+fn postscript_idiv_and_mod_of_i64_min_by_minus_one_give_zero() {
+    // `i64::MIN / -1` and `i64::MIN % -1` overflow, and `/` and `%` panic on them in debug and
+    // release builds. `as i64` turns any dividend at or below -2^63 into `i64::MIN` and turns
+    // a divisor of -1.5 into -1.
+    for (prog, want) in [
+        ("-9223372036854775808 -1 idiv", 0),
+        ("-9223372036854775808 -1 mod", 0),
+        ("-99999999999999999999 -1.5 idiv", 0),
+        ("2 63 exp neg -1 mod", 0),
+        // The result is 0 for a divisor that truncates to 0. Other quotients are truncated
+        // toward zero, and a remainder has the sign of the dividend.
+        ("7 0 idiv", 0),
+        ("7 0.5 mod", 0),
+        ("-7 2 idiv", -3),
+        ("-7 2 mod", -1),
+    ] {
+        let doc = eps(format!("{prog} {want} eq {{ 0 0 10 10 rectfill }} if\n").as_bytes());
+        assert_eq!(shape_names(&doc).len(), 1, "{prog}");
+    }
+}
