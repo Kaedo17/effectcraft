@@ -60,7 +60,14 @@ theme = "@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen"
 icon = "@mipmap/ic_launcher"
 
 [package.metadata.android.application.activity]
-config_changes = "orientation|keyboardHidden|screenSize|screenLayout|smallestScreenSize|density|layoutDirection"
+# Declared exhaustively, game-style. On OneUI (Android 16) a display sleep/wake flips a
+# config bit this activity does not list, so the system relaunches the NativeActivity —
+# and that relaunch deadlocks in the android-activity glue's unloadNativeCode (the main
+# thread waits in on_destroy while the native event-loop thread sleeps on in its looper).
+# The stall times out input dispatch, surfaces as an ANR and flashes the launcher on the
+# next launch. The activity holds no Java resources and draws everything itself, so
+# absorbing config changes natively is safe and removes the trigger entirely.
+config_changes = "orientation|keyboardHidden|screenSize|screenLayout|smallestScreenSize|density|layoutDirection|uiMode|fontScale|keyboard|navigation|touchscreen|locale|mcc|mnc|colorMode"
 label = "EffectCraft"
 launch_mode = "singleTask"
 orientation = "landscape"
