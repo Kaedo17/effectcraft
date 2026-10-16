@@ -11,6 +11,7 @@ rust-version = "1.95"
 repository = "https://github.com/storytold/effectcraft"
 
 [workspace.dependencies]
+craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "ca50d63b773c99f96e75c77ce5a1d21e7c9cda0d", version = "=0.1.0", default-features = false, features = ["read"] }
 # internal
 effectcraft-time = { path = "crates/time" }
 effectcraft-geom = { path = "crates/geom" }
@@ -204,3 +205,6 @@ opt-level = 3
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+[patch.crates-io]
+hayro-syntax = { git = "https://github.com/storytold/craft-libs", rev = "ca50d63b773c99f96e75c77ce5a1d21e7c9cda0d", version = "=0.7.2" }

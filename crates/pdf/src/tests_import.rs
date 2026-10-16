@@ -378,6 +378,12 @@ fn postscript_radix_numbers_outside_2_to_36_are_not_numbers() {
 }
 
 #[test]
+fn extreme_page_indices_have_a_printable_error() {
+    let text = Error::PageOutOfRange(usize::MAX).to_string();
+    assert!(text.starts_with("the PDF has no page "));
+}
+
+#[test]
 fn postscript_idiv_and_mod_of_i64_min_by_minus_one_give_zero() {
     // `i64::MIN / -1` and `i64::MIN % -1` overflow, and `/` and `%` panic on them in debug and
     // release builds. `as i64` turns any dividend at or below -2^63 into `i64::MIN` and turns
